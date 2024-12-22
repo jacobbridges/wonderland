@@ -26,6 +26,23 @@ class User(BaseModel):
 user = User(name="Mad Hatter", room=Room(name="Garden"))
 
 
+"""
+Events ========================================================================
+
+In an event-based system, it makes sense there would lots of events.
+
+I don't love the idea of each action from the user resulting in a custom event 
+  class. My prediction is that it will get very cluttered, very quickly.
+  However, the upside is that events are easily distinguishable. An alternative
+  could be a `code` attribute on every event which is unique, but then I would
+  need to have an enum of event codes somewhere in the system.
+  
+I also don't love the idea of "Input" events vs "Output" events, but perhaps 
+  that is because I am new to event based programming. Essentially I want to 
+  identify two different streams: events being sent to the server, and events
+  being sent to the client.
+===============================================================================
+"""
 class BaseEvent(BaseModel):
     io_flag: str
 
@@ -59,6 +76,14 @@ class HelpOutputEvent(BaseOutputEvent):
 
 
 def parse_input(raw: str, user: User) -> BaseEvent:
+    """
+    Parse input into an event.
+
+    Not sure if this translation makes much sense, but my brain can understand
+    it. Raw input from the client is sent here, and this function converts that
+    raw input into an event for the server to process. Will keep mulling over
+    this bit in my head.
+    """
     raw = raw.strip()
     if raw.startswith("/"):
         channel_flag, *d = raw.split(" ")
@@ -76,6 +101,16 @@ def parse_input(raw: str, user: User) -> BaseEvent:
 
 
 def handle_event(*, event: BaseEvent, queue: list[BaseEvent], listeners: list[Callable]):
+    """
+    Handle all events.
+    TODO: Create registry + decorator function to register even handlers.
+    TODO: Update this function to use the event handler registry.
+
+    This code should be split among several functions, maybe one for handling
+    each type of event. Would be nice to have a registry of events -> handlers,
+    and the code would be easier to read if a function could be decorated with
+    something like @handles(HelpInputEvent).
+    """
     if event.io_flag == "o":
         for listener in listeners:
             listener(event)
@@ -89,6 +124,16 @@ def handle_event(*, event: BaseEvent, queue: list[BaseEvent], listeners: list[Ca
 
 
 def loop(queue: list[BaseEvent], subscribers: list[Callable]):
+    """
+    Will eventually be replaced by a server of some kind. The logic will never
+    be completely decoupled, but the goal is to keep wonderland's api very
+    minimal to make it easy to swap server tech and experiment.
+
+    The current dependencies:
+    - queue
+    - subscribers
+    - handle_event
+    """
 
     while True:
 
@@ -108,6 +153,13 @@ def loop(queue: list[BaseEvent], subscribers: list[Callable]):
 
 
 def input_loop(queue: list[BaseInputEvent]):
+    """
+    This function has some client and server code.
+    TODO: Decouple the client/server code in this function.
+
+    Client code will accept the user's input and push to the server.
+    Server code will parse the user's input into an event and submit to the queue.
+    """
     while True:
         try:
             raw = input(">> ")
@@ -115,7 +167,7 @@ def input_loop(queue: list[BaseInputEvent]):
             if isinstance(event, BaseInputEvent):
                 queue.append(event)
             else:
-                print("Invalid input")
+                print("Invalid input")  # TODO: Remove this cheat! Should be an event.
         except KeyboardInterrupt:
             break
 
