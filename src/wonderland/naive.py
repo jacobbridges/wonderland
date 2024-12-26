@@ -9,7 +9,8 @@ Before you criticize - I know. I should use queues instead of lists, or
   off the shelf instead of home-brewing this disaster. This is my process, get
   over it.
 """
-
+from functools import wraps
+from threading import Thread, Lock
 from typing import Callable
 from time import sleep
 
@@ -27,9 +28,74 @@ user = User(name="Mad Hatter", room=Room(name="Garden"))
 
 
 """
+Topics ========================================================================
+
+In this event based system, a "topic" is an event queue.
+
+I want to tinker with a class with state which cannot be instantiated. Similar
+  to the singleton pattern. Curious if I can share this class between threads
+  with little effort..
+===============================================================================
+"""
+class Topic:
+    queue = list()
+    handlers = dict()
+    lock = Lock()
+
+    def __new__(cls, *args, **kwargs):
+        """This class is meant to be used without instantiation."""
+        raise NotImplementedError("Will not instantiate Topic class.")
+
+    @classmethod
+    def push(cls, event: "BaseEvent"):
+        with cls.lock:
+            cls.queue.append(event)
+
+    @classmethod
+    def pop(cls):
+        with cls.lock:
+            return cls.queue.pop(-1)
+
+    @classmethod
+    def add_handler(cls, event_klass: type["BaseEvent"], handler: Callable[["BaseEvent"], None]):
+        with cls.lock:
+            cls.handlers.setdefault(event_klass, list()).append(handler)
+
+    @classmethod
+    def remove_handler(cls, event_klass: type["BaseEvent"], handler: Callable[["BaseEvent"], None]):
+        with cls.lock:
+            cls.handlers[event_klass].remove(handler)
+
+    @classmethod
+    def process_next_event(cls, raise_if_empty=True):
+        try:
+            next_event = cls.pop()
+        except IndexError as e:
+            if raise_if_empty:
+                raise
+            return
+        for event_klass, handlers in cls.handlers.items():
+            if isinstance(next_event, event_klass):
+                for handler in handlers:
+                    handler(next_event)
+
+    @classmethod
+    def register(cls, event_klass: type["BaseEvent"]):
+        def register_decorator(func):
+            cls.add_handler(event_klass, func)
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapper
+
+        return register_decorator
+
+
+"""
 Events ========================================================================
 
-In an event-based system, it makes sense there would lots of events.
+In an event-based system, it makes sense there would be lots of events.
 
 I don't love the idea of each action from the user resulting in a custom event 
   class. My prediction is that it will get very cluttered, very quickly.
@@ -51,6 +117,11 @@ class ExitEvent(BaseEvent):
     io_flag: str = "i"
 
 
+@Topic.register(ExitEvent)
+def handle_exit_event(event: ExitEvent):
+    raise SystemExit("Found exit event")
+
+
 class BaseInputEvent(BaseEvent):
     io_flag: str = "i"
     channel: str
@@ -69,6 +140,15 @@ class BaseOutputEvent(BaseEvent):
 
 class HelpInputEvent(BaseInputEvent):
     ...
+
+
+@Topic.register(HelpInputEvent)
+def handle_help_input_event(event: "HelpInputEvent", **kwargs):
+    output_event = HelpOutputEvent(
+        channel=event.channel,
+        markup="Here is all the help you need: 📚",
+    )
+    Topic.push(output_event)
 
 
 class HelpOutputEvent(BaseOutputEvent):
@@ -100,59 +180,15 @@ def parse_input(raw: str, user: User) -> BaseEvent:
         return HelpInputEvent(channel=channel, raw_message=raw)
 
 
-def handle_event(*, event: BaseEvent, queue: list[BaseEvent], listeners: list[Callable]):
+def loop():
     """
-    Handle all events.
-    TODO: Create registry + decorator function to register even handlers.
-    TODO: Update this function to use the event handler registry.
-
-    This code should be split among several functions, maybe one for handling
-    each type of event. Would be nice to have a registry of events -> handlers,
-    and the code would be easier to read if a function could be decorated with
-    something like @handles(HelpInputEvent).
+    Extremely simple "game loop" for this naive test.
     """
-    if event.io_flag == "o":
-        for listener in listeners:
-            listener(event)
-    elif isinstance(event, HelpInputEvent):
-        queue.append(HelpOutputEvent(
-            channel=event.channel,
-            markup="Here is all the help you need: 📚",
-        ))
-    elif isinstance(event, ExitEvent):
-        raise SystemExit()
-
-
-def loop(queue: list[BaseEvent], subscribers: list[Callable]):
-    """
-    Will eventually be replaced by a server of some kind. The logic will never
-    be completely decoupled, but the goal is to keep wonderland's api very
-    minimal to make it easy to swap server tech and experiment.
-
-    The current dependencies:
-    - queue
-    - subscribers
-    - handle_event
-    """
-
     while True:
-
-        # Process events
-        stop = False
-        while not stop:
-            try:
-                event = queue.pop()
-                if event.io_flag == "o":
-                    stop = True
-                handle_event(event=event, queue=queue, listeners=subscribers)
-            except IndexError:
-                pass
-            except SystemExit:
-                return
-            sleep(0.3)
+        Topic.process_next_event(raise_if_empty=False)
 
 
-def input_loop(queue: list[BaseInputEvent]):
+def input_loop():
     """
     This function has some client and server code.
     TODO: Decouple the client/server code in this function.
@@ -165,7 +201,7 @@ def input_loop(queue: list[BaseInputEvent]):
             raw = input(">> ")
             event = parse_input(raw, user)
             if isinstance(event, BaseInputEvent):
-                queue.append(event)
+                Topic.push(event)
             else:
                 print("Invalid input")  # TODO: Remove this cheat! Should be an event.
         except KeyboardInterrupt:
@@ -173,15 +209,16 @@ def input_loop(queue: list[BaseInputEvent]):
 
 
 if __name__ == "__main__":
-    from threading import Thread
+    # With this new implementation, "listeners" are simply handlers for any output events
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
 
-    queue = []
-    subscribers = [lambda e: print(e.as_plain_text)]
-    thread = Thread(target=loop, args=(queue, subscribers))
+    # Start the background thread which just runs the Topic.process_next_event() infinitely
+    thread = Thread(target=loop)
     thread.start()
-    input_loop(queue)
+
+    # Listen for input
+    input_loop()
+
     print("waiting for loop() to stop")
-    queue.append(ExitEvent())
+    Topic.push(ExitEvent())
     thread.join()
-
-
