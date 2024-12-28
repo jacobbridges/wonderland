@@ -10,9 +10,9 @@ Before you criticize - I know. I should use queues instead of lists, or
   over it.
 """
 from functools import wraps
+from multiprocessing.pool import ThreadPool
 from threading import Thread, Lock
-from typing import Callable
-from time import sleep
+from typing import Callable, Optional
 
 from pydantic import BaseModel
 
@@ -41,6 +41,7 @@ class Topic:
     queue = list()
     handlers = dict()
     lock = Lock()
+    pool = ThreadPool(processes=4)
 
     def __new__(cls, *args, **kwargs):
         """This class is meant to be used without instantiation."""
@@ -67,7 +68,7 @@ class Topic:
             cls.handlers[event_klass].remove(handler)
 
     @classmethod
-    def process_next_event(cls, raise_if_empty=True):
+    def process_next_event(cls, raise_if_empty=True) -> Optional["BaseEvent"]:
         try:
             next_event = cls.pop()
         except IndexError as e:
@@ -77,7 +78,8 @@ class Topic:
         for event_klass, handlers in cls.handlers.items():
             if isinstance(next_event, event_klass):
                 for handler in handlers:
-                    handler(next_event)
+                    cls.pool.apply_async(handler, args=(next_event,))
+        return next_event
 
     @classmethod
     def register(cls, event_klass: type["BaseEvent"]):
@@ -90,6 +92,10 @@ class Topic:
             return wrapper
 
         return register_decorator
+
+    @classmethod
+    def close(cls):
+        cls.pool.close()
 
 
 """
@@ -185,7 +191,9 @@ def loop():
     Extremely simple "game loop" for this naive test.
     """
     while True:
-        Topic.process_next_event(raise_if_empty=False)
+        event = Topic.process_next_event(raise_if_empty=False)
+        if isinstance(event, ExitEvent):
+            return
 
 
 def input_loop():
@@ -211,6 +219,11 @@ def input_loop():
 if __name__ == "__main__":
     # With this new implementation, "listeners" are simply handlers for any output events
     Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
+    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
 
     # Start the background thread which just runs the Topic.process_next_event() infinitely
     thread = Thread(target=loop)
@@ -222,3 +235,4 @@ if __name__ == "__main__":
     print("waiting for loop() to stop")
     Topic.push(ExitEvent())
     thread.join()
+    Topic.close()
