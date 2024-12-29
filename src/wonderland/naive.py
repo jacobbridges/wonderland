@@ -15,14 +15,57 @@ from threading import Thread, Lock
 from typing import Callable, Optional
 
 from pydantic import BaseModel
+from sqlmodel import SQLModel, Field, Relationship, create_engine, Session as SQLSession, select
 
 
-class Room(BaseModel):
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
     name: str
+    room_id: int | None = Field(default=None, foreign_key="room.id")
+    room: Optional["Room"] | None = Relationship(back_populates="users")
 
-class User(BaseModel):
+
+class Room(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
     name: str
-    room: Room
+    users: list["User"] = Relationship(back_populates="room")
+
+
+engine = create_engine("sqlite:///test", echo=True)
+
+
+def setup_db():
+    """
+    Create a quick database to test making database calls from event handlers.
+    """
+    SQLModel.metadata.create_all(engine)
+
+    with SQLSession(engine) as sql_session:
+        results = sql_session.exec(select(Room).where(Room.name == "Library"))
+        room = results.first()
+        if not room:
+            room = Room(name="Library")
+            sql_session.add(room)
+            sql_session.commit()
+
+        results = sql_session.exec(select(User).where(User.name == "Mad Hatter"))
+        user = results.first()
+        if not user:
+            user = User(name="Mad Hatter", room_id=room.id)
+            sql_session.add(user)
+            sql_session.commit()
+
+
+def get_user(name: str) -> User | None:
+    with SQLSession(engine) as sql_session:
+        statement = select(User).where(User.name == name)
+        results = sql_session.exec(statement)
+        return results.one()
+
+
+def get_room(room_id: int) -> Room | None:
+    with SQLSession(engine) as sql_session:
+        return sql_session.get(Room, room_id)
 
 
 """
@@ -36,6 +79,7 @@ The session tracks information about the current session, like who the
 
 class Session(BaseModel):
     user: User
+    # room: Room
 
 
 """
@@ -100,8 +144,12 @@ class Topic:
             cls.add_handler(event_klass, func)
             @wraps(func)
             def wrapper(*args, **kwargs):
-                return func(*args, **kwargs)
-
+                try:
+                    return func(*args, **kwargs)
+                except Exception:
+                    import logging
+                    logging.exception("Something happened in the thread..")
+                    raise
             return wrapper
 
         return register_decorator
@@ -200,9 +248,11 @@ class LookInputEvent(BaseInputEvent):
 
 @Topic.register(LookInputEvent)
 def handle_look_input_event(event: "LookInputEvent", **kwargs):
+    room = get_room(event.session.user.room_id)
+    print("The Room", room)
     output_event = LookOutputEvent(
         channel=event.channel,
-        markup="You look around the {}".format(event.session.user.room.name),
+        markup="You look around the {}".format(room.name),
     )
     Topic.push(output_event)
 
@@ -281,9 +331,13 @@ def client_loop(session: Session):
 
 
 if __name__ == "__main__":
-    # Fake a session for our scenario
+    # Create the database and a user / room
+    setup_db()
+
+    # Session for our scenario
+    u = get_user("Mad Hatter")
     s = Session(
-        user=User(name="Mad Hatter", room=Room(name="Garden"))
+        user=u,
     )
 
     # With this new implementation, "listeners" are simply handlers for any output events
