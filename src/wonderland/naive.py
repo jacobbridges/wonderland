@@ -4,10 +4,10 @@ Having trouble wrapping my head around how to make an event based library
   serving mechanism. So I decided to start with a naive approach and iterate
   upon it.
 
-Before you criticize - I know. I should use queues instead of lists, or
-  ThreadPools instead of a single Thread, or maybe grab a quality event library
-  off the shelf instead of home-brewing this disaster. This is my process, get
-  over it.
+This naive solution is becoming difficult to parse. Testing a few more complex
+  scenarios to ensure this pattern is stable before fully committing to this
+  technique. I also want to try using a curses library to organize outputs
+  by channel.
 """
 from functools import wraps
 from multiprocessing.pool import ThreadPool
@@ -194,6 +194,23 @@ class InvalidInputOutputEvent(BaseOutputEvent):
     ...
 
 
+class LookInputEvent(BaseInputEvent):
+    ...
+
+
+@Topic.register(LookInputEvent)
+def handle_look_input_event(event: "LookInputEvent", **kwargs):
+    output_event = LookOutputEvent(
+        channel=event.channel,
+        markup="You look around the {}".format(event.session.user.room.name),
+    )
+    Topic.push(output_event)
+
+
+class LookOutputEvent(BaseOutputEvent):
+    ...
+
+
 def parse_input(raw: str, session: Session) -> BaseEvent:
     """
     Parse input into an event.
@@ -217,6 +234,12 @@ def parse_input(raw: str, session: Session) -> BaseEvent:
 
     if raw == "help":
         return HelpInputEvent(
+            session=session,
+            channel=channel,
+            raw_message=raw,
+        )
+    if raw == "look":
+        return LookInputEvent(
             session=session,
             channel=channel,
             raw_message=raw,
