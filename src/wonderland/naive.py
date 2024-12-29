@@ -10,8 +10,6 @@ This naive solution is becoming difficult to parse. Testing a few more complex
   by channel.
 """
 from functools import wraps
-from multiprocessing.context import TimeoutError
-from multiprocessing.pool import ThreadPool
 from threading import Thread, Lock
 from typing import Callable, Optional
 
@@ -117,7 +115,7 @@ class Topic:
     queue = list()
     handlers = dict()
     lock = Lock()
-    pool = ThreadPool(processes=4)
+    pool = []
     results = []
 
     def __new__(cls, *args, **kwargs):
@@ -155,8 +153,10 @@ class Topic:
         for event_klass, handlers in cls.handlers.items():
             if isinstance(next_event, event_klass):
                 for handler in handlers:
-                    result = cls.pool.apply_async(handler, args=(next_event,))
-                    Topic.results.append(result)
+                    t = Thread(target=handler, args=(next_event,))
+                    t.start()
+                    cls.pool.append(t)
+        cls.pool = [t for t in cls.pool if t.is_alive()]
         return next_event
 
     @classmethod
@@ -165,25 +165,16 @@ class Topic:
             cls.add_handler(event_klass, func)
             @wraps(func)
             def wrapper(*args, **kwargs):
-                try:
-                    return func(*args, **kwargs)
-                except Exception:
-                    import logging
-                    logging.exception("Something happened in the thread..")
-                    raise
+                return func(*args, **kwargs)
             return wrapper
 
         return register_decorator
 
     @classmethod
     def close(cls):
-        for result in cls.results:
-            try:
-                result.get(timeout=3)
-            except TimeoutError:
-                import logging
-                logging.exception("Worker timed out after 3 seconds")
-        cls.pool.close()
+        for t in cls.pool:
+            if t.is_alive():
+                t.join()
 
 
 """
@@ -413,6 +404,11 @@ if __name__ == "__main__":
 
     # Listen for input
     client_loop(s)
+    # Topic.push(LookInputEvent(
+    #     session=s,
+    #     channel="system",
+    #     raw_message="look",
+    # ))
 
     print("waiting for loop() to stop")
     Topic.push(ExitEvent())
