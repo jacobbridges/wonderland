@@ -10,6 +10,7 @@ This naive solution is becoming difficult to parse. Testing a few more complex
   by channel.
 """
 from functools import wraps
+from multiprocessing.context import TimeoutError
 from multiprocessing.pool import ThreadPool
 from threading import Thread, Lock
 from typing import Callable, Optional
@@ -29,8 +30,17 @@ class Room(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
     users: list["User"] = Relationship(back_populates="room")
+    things: list["Thing"] = Relationship(back_populates="room")
 
 
+class Thing(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    room_id: int | None = Field(default=None, foreign_key="room.id")
+    room: Optional["Room"] | None = Relationship(back_populates="things")
+
+
+# Interesting note: Using an in-memory database will not work with threads.
 engine = create_engine("sqlite:///test", echo=True)
 
 
@@ -63,9 +73,19 @@ def get_user(name: str) -> User | None:
         return results.one()
 
 
-def get_room(room_id: int) -> Room | None:
+def get_room_and_things(room_id: int) -> (Room | None, list[Thing]):
     with SQLSession(engine) as sql_session:
-        return sql_session.get(Room, room_id)
+        room = sql_session.get(Room, room_id)
+        return room, room.things
+
+
+def create_item(name: str, room_id: int) -> Thing:
+    with SQLSession(engine) as sql_session:
+        thing = Thing(name=name, room_id=room_id)
+        sql_session.add(thing)
+        sql_session.commit()
+        sql_session.refresh(thing)
+        return thing
 
 
 """
@@ -79,7 +99,6 @@ The session tracks information about the current session, like who the
 
 class Session(BaseModel):
     user: User
-    # room: Room
 
 
 """
@@ -99,6 +118,7 @@ class Topic:
     handlers = dict()
     lock = Lock()
     pool = ThreadPool(processes=4)
+    results = []
 
     def __new__(cls, *args, **kwargs):
         """This class is meant to be used without instantiation."""
@@ -135,7 +155,8 @@ class Topic:
         for event_klass, handlers in cls.handlers.items():
             if isinstance(next_event, event_klass):
                 for handler in handlers:
-                    cls.pool.apply_async(handler, args=(next_event,))
+                    result = cls.pool.apply_async(handler, args=(next_event,))
+                    Topic.results.append(result)
         return next_event
 
     @classmethod
@@ -156,6 +177,12 @@ class Topic:
 
     @classmethod
     def close(cls):
+        for result in cls.results:
+            try:
+                result.get(timeout=3)
+            except TimeoutError:
+                import logging
+                logging.exception("Worker timed out after 3 seconds")
         cls.pool.close()
 
 
@@ -246,19 +273,50 @@ class LookInputEvent(BaseInputEvent):
     ...
 
 
+def aan(word: str) -> str:
+    """Given the word, which article to use? 'a' or 'an'?"""
+    for vowel in "aeiou":
+        if word.startswith(vowel):
+            return "an"
+    return "a"
+
+
 @Topic.register(LookInputEvent)
 def handle_look_input_event(event: "LookInputEvent", **kwargs):
-    room = get_room(event.session.user.room_id)
-    print("The Room", room)
+    room, things = get_room_and_things(event.session.user.room_id)
+    print(room, things, "yeah")
+    markup = f"You look around the {room.name}."
+    for thing in things:
+        markup += f" You see {aan(thing.name)} {thing.name}."
     output_event = LookOutputEvent(
         channel=event.channel,
-        markup="You look around the {}".format(room.name),
+        markup=markup,
     )
     Topic.push(output_event)
 
 
 class LookOutputEvent(BaseOutputEvent):
     ...
+
+
+class CreateItemInputEvent(BaseInputEvent):
+    item_name: str
+
+
+class CreateItemOutputEvent(BaseOutputEvent):
+    ...
+
+
+@Topic.register(CreateItemInputEvent)
+def handle_create_item_input_event(event: "CreateItemInputEvent", **kwargs):
+    room, _ = get_room_and_things(event.session.user.room_id)
+    thing = create_item(event.item_name, room.id)
+    markup = f"You create {aan(thing.name)} {thing.name} and drop it on the ground."
+    output_event = CreateItemOutputEvent(
+        channel=event.channel,
+        markup=markup,
+    )
+    Topic.push(output_event)
 
 
 def parse_input(raw: str, session: Session) -> BaseEvent:
@@ -292,6 +350,14 @@ def parse_input(raw: str, session: Session) -> BaseEvent:
         return LookInputEvent(
             session=session,
             channel=channel,
+            raw_message=raw,
+        )
+    if raw.startswith("create"):
+        thing_name = raw.split(" ")[1].strip()
+        return CreateItemInputEvent(
+            session=session,
+            channel=channel,
+            item_name=thing_name,
             raw_message=raw,
         )
 
@@ -336,9 +402,7 @@ if __name__ == "__main__":
 
     # Session for our scenario
     u = get_user("Mad Hatter")
-    s = Session(
-        user=u,
-    )
+    s = Session(user=u)
 
     # With this new implementation, "listeners" are simply handlers for any output events
     Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
