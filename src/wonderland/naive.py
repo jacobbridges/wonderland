@@ -24,7 +24,18 @@ class User(BaseModel):
     name: str
     room: Room
 
-user = User(name="Mad Hatter", room=Room(name="Garden"))
+
+"""
+Session =======================================================================
+
+The session tracks information about the current session, like who the 
+  currently authenticated user is.
+===============================================================================
+"""
+
+
+class Session(BaseModel):
+    user: User
 
 
 """
@@ -37,6 +48,8 @@ I want to tinker with a class with state which cannot be instantiated. Similar
   with little effort..
 ===============================================================================
 """
+
+
 class Topic:
     queue = list()
     handlers = dict()
@@ -115,6 +128,8 @@ I also don't love the idea of "Input" events vs "Output" events, but perhaps
   being sent to the client.
 ===============================================================================
 """
+
+
 class BaseEvent(BaseModel):
     io_flag: str
 
@@ -129,15 +144,16 @@ def handle_exit_event(event: ExitEvent):
 
 
 class BaseInputEvent(BaseEvent):
-    io_flag: str = "i"
     channel: str
     raw_message: str
+    session: Session
+    io_flag: str = "i"
 
 
 class BaseOutputEvent(BaseEvent):
-    io_flag: str = "o"
     channel: str
     markup: str
+    io_flag: str = "o"
 
     @property
     def as_plain_text(self):
@@ -161,7 +177,24 @@ class HelpOutputEvent(BaseOutputEvent):
     ...
 
 
-def parse_input(raw: str, user: User) -> BaseEvent:
+class InvalidInputEvent(BaseInputEvent):
+    ...
+
+
+@Topic.register(InvalidInputEvent)
+def handle_invalid_input_event(event: "InvalidInputEvent", **kwargs):
+    output_event = InvalidInputOutputEvent(
+        channel=event.channel,
+        markup="Invalid input!",
+    )
+    Topic.push(output_event)
+
+
+class InvalidInputOutputEvent(BaseOutputEvent):
+    ...
+
+
+def parse_input(raw: str, session: Session) -> BaseEvent:
     """
     Parse input into an event.
 
@@ -183,7 +216,11 @@ def parse_input(raw: str, user: User) -> BaseEvent:
     }.get(channel_flag, "system")
 
     if raw == "help":
-        return HelpInputEvent(channel=channel, raw_message=raw)
+        return HelpInputEvent(
+            session=session,
+            channel=channel,
+            raw_message=raw,
+        )
 
 
 def loop():
@@ -196,7 +233,7 @@ def loop():
             return
 
 
-def input_loop():
+def client_loop(session: Session):
     """
     This function has some client and server code.
     TODO: Decouple the client/server code in this function.
@@ -207,22 +244,26 @@ def input_loop():
     while True:
         try:
             raw = input(">> ")
-            event = parse_input(raw, user)
+            event = parse_input(raw, session)
             if isinstance(event, BaseInputEvent):
                 Topic.push(event)
             else:
-                print("Invalid input")  # TODO: Remove this cheat! Should be an event.
+                Topic.push(InvalidInputEvent(
+                    session=session,
+                    raw_message=raw,
+                    channel="system",
+                ))
         except KeyboardInterrupt:
             break
 
 
 if __name__ == "__main__":
+    # Fake a session for our scenario
+    s = Session(
+        user=User(name="Mad Hatter", room=Room(name="Garden"))
+    )
+
     # With this new implementation, "listeners" are simply handlers for any output events
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
     Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
 
     # Start the background thread which just runs the Topic.process_next_event() infinitely
@@ -230,7 +271,7 @@ if __name__ == "__main__":
     thread.start()
 
     # Listen for input
-    input_loop()
+    client_loop(s)
 
     print("waiting for loop() to stop")
     Topic.push(ExitEvent())
