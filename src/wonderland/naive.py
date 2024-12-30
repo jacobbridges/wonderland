@@ -8,6 +8,18 @@ This naive solution is becoming difficult to parse. Testing a few more complex
   scenarios to ensure this pattern is stable before fully committing to this
   technique. I also want to try using a curses library to organize outputs
   by channel.
+
+More thoughts:
+  1. Command parsing needs to be sorted out. I'm thinking pydantic models for
+     each type of command, then adding them to a registry. When parsing for
+     input, loop through the different available commands. I like this, but
+     each new command will require a Command model, EventInput model, and
+     EventOutput model. Seems very tedious - am I missing something?
+  2. Topic being global is annoying me. Prevents dependency injection for
+     test cases.
+  3. Command success / error events. This can get very verbose - should I
+     create a success and failure event class for each command? Should I add a
+     "status" attribute to the OutputEvent which can be "success" or "failure"?
 """
 from functools import wraps
 from threading import Thread, Lock
@@ -388,7 +400,66 @@ def handle_create_item_input_event(event: "CreateItemInputEvent", **kwargs):
     Topic.push(output_event)
 
 
-def parse_input(raw: str, session: Session) -> BaseEvent:
+class LookAtInputEvent(BaseInputEvent):
+    item_name: str
+
+
+class LookAtOutputEvent(BaseOutputEvent):
+    ...
+
+
+@Topic.register(LookAtInputEvent)
+def handle_look_at_input_event(event: "LookAtInputEvent", **kwargs):
+    room, things = get_room_and_things(event.session.user.room_id)
+    focus = None
+    for thing in things:
+        if thing.name == event.item_name:
+            focus = thing
+    if focus is None:
+        Topic.push(LookAtOutputEvent(
+            channel=event.channel,
+            markup="You do not see that here.",
+        ))
+        return
+
+    output_event = CreateItemOutputEvent(
+        channel=event.channel,
+        markup=f"It is {aan(focus.name)} {focus.name}.",
+    )
+    Topic.push(output_event)
+
+
+class DestroyItemInputEvent(BaseInputEvent):
+    item_name: str
+
+
+class DestroyItemOutputEvent(BaseOutputEvent):
+    ...
+
+
+@Topic.register(DestroyItemInputEvent)
+def handle_destroy_item_input_event(event: "DestroyItemInputEvent", **kwargs):
+    room, things = get_room_and_things(event.session.user.room_id)
+    focus = None
+    for thing in things:
+        if thing.name == event.item_name:
+            focus = thing
+    if focus is None:
+        Topic.push(DestroyItemOutputEvent(
+            channel=event.channel,
+            markup="You do not see that here.",
+        ))
+        return
+
+    destroy_item(focus.id)
+
+    output_event = CreateItemOutputEvent(
+        channel=event.channel,
+        markup=f"The {focus.name} instantly vanishes from existence.",
+    )
+    Topic.push(output_event)
+
+
 def parse_input(raw: str, session: Session) -> BaseEvent | None:
     """
     Parse input into an event.
@@ -423,9 +494,28 @@ def parse_input(raw: str, session: Session) -> BaseEvent | None:
             channel=channel,
             raw_message=raw,
         )
+    if raw.startswith("look"):
+        idx = 1
+        if raw.startswith("look at"):
+            idx = 2
+        thing_name = " ".join(raw.split(" ")[idx:])
+        return LookAtInputEvent(
+            session=session,
+            channel=channel,
+            item_name=thing_name,
+            raw_message=raw,
+        )
     if raw.startswith("create"):
         thing_name = raw.split(" ")[1].strip()
         return CreateItemInputEvent(
+            session=session,
+            channel=channel,
+            item_name=thing_name,
+            raw_message=raw,
+        )
+    if raw.startswith("destroy"):
+        thing_name = raw.split(" ")[1].strip()
+        return DestroyItemInputEvent(
             session=session,
             channel=channel,
             item_name=thing_name,
