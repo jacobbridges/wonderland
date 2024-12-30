@@ -13,8 +13,78 @@ from functools import wraps
 from threading import Thread, Lock
 from typing import Callable, Optional
 
+from textual import on
+from textual.app import App, ComposeResult
+from textual.widgets import Footer, Header, Input, Markdown, Log, TabbedContent, TabPane
+
 from pydantic import BaseModel
 from sqlmodel import SQLModel, Field, Relationship, create_engine, Session as SQLSession, select
+
+
+"""
+UI Code =======================================================================
+
+Use the incredible `textual` library to build a simple UI in the terminal. The
+  UI draws an input box at the bottom of the screen, and any command output is
+  written to the log at the top of the screen.
+  
+I am also tinkering with the idea of tabs for each channel. Haven't really
+  fleshed out what I want to do with channels yet.
+===============================================================================
+"""
+
+
+class CliApp(App):
+    """Simple app to demonstrate chatting to an LLM."""
+
+    AUTO_FOCUS = "Input"
+
+    CSS = """
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with TabbedContent():
+            with TabPane("Room", id="room-tab"):
+                yield Log(id="room-output")
+            with TabPane("System", id="system-tab"):
+                yield Log(id="system-output")
+        yield Input(placeholder="Input your command here")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        user = get_user("Mad Hatter")
+        self.session = Session(user=user)
+        room_output = self.query_one("#room-output")
+        system_output = self.query_one("#system-output")
+        def handle_output(e: BaseOutputEvent):
+            if e.channel == "system":
+                system_output.write_line(e.markup)
+            elif e.channel == "room":
+                room_output.write_line(e.markup)
+        Topic.add_handler(BaseOutputEvent, handle_output)
+
+    @on(Input.Submitted)
+    def on_input(self, event: Input.Submitted) -> None:
+        """When the user hits return."""
+        event.input.clear()
+        naive_event = parse_input(event.value, self.session)
+        if isinstance(naive_event, BaseInputEvent):
+            Topic.push(naive_event)
+        else:
+            Topic.push(InvalidInputEvent(
+                session=self.session,
+                raw_message=event.value,
+                channel="system",
+            ))
+
+
+"""
+Database ======================================================================
+
+Define a few simple models and functions for creating and seeding the database.
+===============================================================================
+"""
 
 
 class User(SQLModel, table=True):
@@ -39,7 +109,7 @@ class Thing(SQLModel, table=True):
 
 
 # Interesting note: Using an in-memory database will not work with threads.
-engine = create_engine("sqlite:///test", echo=True)
+engine = create_engine("sqlite:///test", echo=False)
 
 
 def setup_db():
@@ -83,6 +153,14 @@ def create_item(name: str, room_id: int) -> Thing:
         sql_session.add(thing)
         sql_session.commit()
         sql_session.refresh(thing)
+        return thing
+
+
+def destroy_item(thing_id: int) -> Thing | None:
+    with SQLSession(engine) as sql_session:
+        thing = sql_session.get(Thing, thing_id)
+        sql_session.delete(thing)
+        sql_session.commit()
         return thing
 
 
@@ -311,6 +389,7 @@ def handle_create_item_input_event(event: "CreateItemInputEvent", **kwargs):
 
 
 def parse_input(raw: str, session: Session) -> BaseEvent:
+def parse_input(raw: str, session: Session) -> BaseEvent | None:
     """
     Parse input into an event.
 
@@ -320,6 +399,7 @@ def parse_input(raw: str, session: Session) -> BaseEvent:
     this bit in my head.
     """
     raw = raw.strip()
+    if not raw: return
     if raw.startswith("/"):
         channel_flag, *d = raw.split(" ")
         raw = " ".join(d)
@@ -328,7 +408,7 @@ def parse_input(raw: str, session: Session) -> BaseEvent:
 
     channel = {
         "/1": "system",
-        "/2": "chat",
+        "/2": "room",
     }.get(channel_flag, "system")
 
     if raw == "help":
@@ -355,7 +435,7 @@ def parse_input(raw: str, session: Session) -> BaseEvent:
 
 def loop():
     """
-    Extremely simple "game loop" for this naive test.
+    Extremely simple "server loop" for this naive test.
     """
     while True:
         event = Topic.process_next_event(raise_if_empty=False)
@@ -363,54 +443,18 @@ def loop():
             return
 
 
-def client_loop(session: Session):
-    """
-    This function has some client and server code.
-    TODO: Decouple the client/server code in this function.
-
-    Client code will accept the user's input and push to the server.
-    Server code will parse the user's input into an event and submit to the queue.
-    """
-    while True:
-        try:
-            raw = input(">> ")
-            event = parse_input(raw, session)
-            if isinstance(event, BaseInputEvent):
-                Topic.push(event)
-            else:
-                Topic.push(InvalidInputEvent(
-                    session=session,
-                    raw_message=raw,
-                    channel="system",
-                ))
-        except KeyboardInterrupt:
-            break
-
-
 if __name__ == "__main__":
     # Create the database and a user / room
     setup_db()
-
-    # Session for our scenario
-    u = get_user("Mad Hatter")
-    s = Session(user=u)
-
-    # With this new implementation, "listeners" are simply handlers for any output events
-    Topic.add_handler(BaseOutputEvent, lambda e: print("Client 1:", e.markup))
 
     # Start the background thread which just runs the Topic.process_next_event() infinitely
     thread = Thread(target=loop)
     thread.start()
 
-    # Listen for input
-    client_loop(s)
-    # Topic.push(LookInputEvent(
-    #     session=s,
-    #     channel="system",
-    #     raw_message="look",
-    # ))
+    # Start cli client
+    app = CliApp()
+    app.run()
 
-    print("waiting for loop() to stop")
     Topic.push(ExitEvent())
     thread.join()
     Topic.close()
