@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Header, Input, Markdown, Log, TabbedContent, TabPane
+from textual.widgets import Footer, Header, Input, Log, TabbedContent, TabPane
 
 from pydantic import BaseModel
 from sqlmodel import SQLModel, Field, Relationship, create_engine, Session as SQLSession, select
@@ -52,6 +52,18 @@ class CliApp(App):
     AUTO_FOCUS = "Input"
 
     CSS = """
+    Header {
+        max-height: 10vh;
+    }
+    TabbedContent {
+        max-height: 60vh;
+    }
+    Input {
+        max-height: 20vh;
+    }
+    Footer {
+        max-height: 10vh;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -460,14 +472,105 @@ def handle_destroy_item_input_event(event: "DestroyItemInputEvent", **kwargs):
     Topic.push(output_event)
 
 
+"""
+Command Parsing ===============================================================
+
+Goal to restructure command parsing:
+
+- Commands should be objects.
+- Available commands should be tracked in a registry.
+- Input parser should be a simple function which leverages the registry.
+===============================================================================
+"""
+
+
+class Command(BaseModel):
+    trigger: str
+    pos_args: list[str]
+    opt_args: list[str]
+    event_class: type[BaseEvent]
+
+    def parse(self, raw: str) -> dict[str, str]:
+        """
+        This looks bad. I should do a write-up on what's going on here.
+        """
+        raw_cp = raw.replace(self.trigger, "").strip()
+        if len(raw_cp) == 0:
+            return dict()
+
+        args = dict()
+        cursor = 0
+        for pos_arg in self.pos_args:
+            arg = ''
+            if raw_cp[cursor] in ('"',):
+                cursor += 1
+                for idx, l in enumerate(raw_cp[cursor:]):
+                    if l in ('"',):
+                        cursor += (idx + 1)
+                        break
+                    else:
+                        arg += l
+            else:
+                arg, *rest = raw_cp[cursor:].strip().split(" ")
+                cursor += len(arg)
+            args[pos_arg] = arg
+        return args
+
+
+class HelpCommand(Command):
+    trigger: str = "help"
+    pos_args: list[str] = []
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = HelpInputEvent
+
+
+class LookCommand(Command):
+    trigger: str = "look"
+    pos_args: list[str] = []
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = LookInputEvent
+
+
+class LookAtCommand(Command):
+    trigger: str = "look at"
+    pos_args: list[str] = ["item_name"]
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = LookAtInputEvent
+
+
+class CreateCommand(Command):
+    trigger: str = "create"
+    pos_args: list[str] = ["item_name"]
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = CreateItemInputEvent
+
+
+class DestroyCommand(Command):
+    trigger: str = "destroy"
+    pos_args: list[str] = ["item_name"]
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = DestroyItemInputEvent
+
+
+class CommandRegistry:
+    def __init__(self):
+        self._map_by_trigger = {}
+        self.load_commands()
+
+    def load_commands(self):
+        for klass in Command.__subclasses__():
+            instance = klass()
+            self._map_by_trigger[instance.trigger] = instance
+
+    def get_command(self, raw: str) -> Command:
+        for trigger, command in self._map_by_trigger.items():
+            if raw.startswith(trigger):
+                return command
+
+
 def parse_input(raw: str, session: Session) -> BaseEvent | None:
     """
     Parse input into an event.
-
-    Not sure if this translation makes much sense, but my brain can understand
-    it. Raw input from the client is sent here, and this function converts that
-    raw input into an event for the server to process. Will keep mulling over
-    this bit in my head.
     """
     raw = raw.strip()
     if not raw: return
@@ -482,45 +585,17 @@ def parse_input(raw: str, session: Session) -> BaseEvent | None:
         "/2": "room",
     }.get(channel_flag, "system")
 
-    if raw == "help":
-        return HelpInputEvent(
-            session=session,
-            channel=channel,
-            raw_message=raw,
-        )
-    if raw == "look":
-        return LookInputEvent(
-            session=session,
-            channel=channel,
-            raw_message=raw,
-        )
-    if raw.startswith("look"):
-        idx = 1
-        if raw.startswith("look at"):
-            idx = 2
-        thing_name = " ".join(raw.split(" ")[idx:])
-        return LookAtInputEvent(
-            session=session,
-            channel=channel,
-            item_name=thing_name,
-            raw_message=raw,
-        )
-    if raw.startswith("create"):
-        thing_name = raw.split(" ")[1].strip()
-        return CreateItemInputEvent(
-            session=session,
-            channel=channel,
-            item_name=thing_name,
-            raw_message=raw,
-        )
-    if raw.startswith("destroy"):
-        thing_name = raw.split(" ")[1].strip()
-        return DestroyItemInputEvent(
-            session=session,
-            channel=channel,
-            item_name=thing_name,
-            raw_message=raw,
-        )
+    command = CommandRegistry().get_command(raw)
+    if command.pos_args:
+        args = command.parse(raw)
+    else:
+        args = dict()
+    return command.event_class(
+        session=session,
+        channel=channel,
+        raw_message=raw,
+        **args,
+    )
 
 
 def loop():
