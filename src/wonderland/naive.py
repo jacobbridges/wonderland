@@ -30,7 +30,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, Log, TabbedContent, TabPane
 
 from pydantic import BaseModel
-from sqlmodel import SQLModel, Field, Relationship, create_engine, Session as SQLSession, select
+from sqlmodel import SQLModel, Field, Relationship, create_engine, Session as SQLSession, select, or_
 
 
 """
@@ -77,7 +77,7 @@ class CliApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        user = get_user("Mad Hatter")
+        user = get_user_by_name("Mad Hatter")
         self.session = Session(user=user)
         room_output = self.query_one("#room-output")
         system_output = self.query_one("#system-output")
@@ -92,6 +92,7 @@ class CliApp(App):
     def on_input(self, event: Input.Submitted) -> None:
         """When the user hits return."""
         event.input.clear()
+        self.session.user = get_user_by_name(self.session.user.name)
         naive_event = parse_input(event.value, self.session)
         if isinstance(naive_event, BaseInputEvent):
             Topic.push(naive_event)
@@ -132,6 +133,14 @@ class Thing(SQLModel, table=True):
     room: Optional["Room"] | None = Relationship(back_populates="things")
 
 
+class Door(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    state: str
+    room_1_id: int | None = Field(default=None)
+    room_2_id: int | None = Field(default=None)
+
+
 # Interesting note: Using an in-memory database will not work with threads.
 engine = create_engine("sqlite:///test", echo=False)
 
@@ -158,17 +167,35 @@ def setup_db():
             sql_session.commit()
 
 
-def get_user(name: str) -> User | None:
+def get_user_by_name(name: str) -> User | None:
     with SQLSession(engine) as sql_session:
         statement = select(User).where(User.name == name)
         results = sql_session.exec(statement)
         return results.one()
+    
+
+def move_user(user_id: int, room_id: int) -> User:
+    with SQLSession(engine) as sql_session:
+        user = sql_session.get_one(User, user_id)
+        room = sql_session.get_one(Room, room_id)
+        user.room_id = room.id
+        sql_session.add(user)
+        sql_session.commit()
+        sql_session.refresh(user)
+        return user
 
 
 def get_room_and_things(room_id: int) -> (Room | None, list[Thing]):
     with SQLSession(engine) as sql_session:
         room = sql_session.get(Room, room_id)
         return room, room.things
+    
+
+def get_room_by_name(room_name: str) -> (Room | None):
+    with SQLSession(engine) as sql_session:
+        statement = select(Room).where(Room.name == room_name)
+        results = sql_session.exec(statement)
+        return results.one()
 
 
 def create_item(name: str, room_id: int) -> Thing:
@@ -186,6 +213,46 @@ def destroy_item(thing_id: int) -> Thing | None:
         sql_session.delete(thing)
         sql_session.commit()
         return thing
+
+
+def create_room(name: str) -> Room:
+    with SQLSession(engine) as sql_session:
+        room = Room(name=name)
+        sql_session.add(room)
+        sql_session.commit()
+        sql_session.refresh(room)
+        return room
+
+
+def create_door(name, room_ids: tuple[int, int]) -> Door:
+    with SQLSession(engine) as sql_session:
+        door = Door(
+            name=name,
+            room_id_1=room_ids[0],
+            room_id_2=room_ids[1],
+            state="open",
+        )
+        sql_session.add(door)
+        sql_session.commit()
+        sql_session.refresh(door)
+        return door
+
+
+def enter_door(name: str, current_room_id: int, user_id: int) -> User:
+    with SQLSession(engine) as sql_session:
+        user = sql_session.get(User, user_id)
+        assert user is not None
+        statement = select(Door)\
+            .where(Door.name == name)\
+            .where(or_(Door.room_1_id == current_room_id, Door.room_2_id == current_room_id))
+        results = sql_session.exec(statement)
+        door = results.one()
+        other_room_id = [room_id for room_id in (door.room_1_id, door.room_2_id) if room_id != current_room_id]
+        user.room_id = other_room_id
+        sql_session.add(user)
+        sql_session.commit()
+        sql_session.refresh(user)
+        return user
 
 
 """
@@ -471,6 +538,42 @@ def handle_destroy_item_input_event(event: "DestroyItemInputEvent", **kwargs):
     Topic.push(output_event)
 
 
+class CreateRoomInputEvent(BaseInputEvent):
+    room_name: str
+
+
+class CreateRoomOutputEvent(BaseOutputEvent):
+    ...
+
+
+@Topic.register(CreateRoomInputEvent)
+def handle_create_room_input_event(event: "CreateRoomInputEvent", **kwargs):
+    room = create_room(event.room_name)
+    Topic.push(CreateRoomOutputEvent(
+        channel=event.channel,
+        markup=f"The {room.name} manifests somewhere in the world.",
+    ))
+    
+    
+class PlayerPortInputEvent(BaseInputEvent):
+    room_name: str
+    
+
+class PlayerPortOutputEvent(BaseOutputEvent):
+    ...
+
+
+@Topic.register(PlayerPortInputEvent)
+def handle_player_port_input_event(event: "PlayerPortInputEvent", **kwargs):
+    room = get_room_by_name(event.room_name)
+    user = move_user(event.session.user.id, room.id)
+    event.session.user = user
+    Topic.push(PlayerPortOutputEvent(
+        channel=event.channel,
+        markup=f"You teleport to the {room.name}.",
+    ))
+
+
 """
 Command Parsing ===============================================================
 
@@ -585,6 +688,20 @@ class DestroyCommand(Command):
     pos_args: list[str] = ["item_name"]
     opt_args: list[str] = []
     event_class: type[BaseEvent] = DestroyItemInputEvent
+
+
+class RoomCommand(Command):
+    trigger: str = "room"
+    pos_args: list[str] = ["room_name"]
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = CreateRoomInputEvent
+
+
+class PortCommand(Command):
+    trigger: str = "port"
+    pos_args: list[str] = ["room_name"]
+    opt_args: list[str] = []
+    event_class: type[BaseEvent] = PlayerPortInputEvent
 
 
 class CommandRegistry:
