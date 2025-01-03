@@ -69,10 +69,10 @@ class CliApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent():
-            with TabPane("Room", id="room-tab"):
-                yield Log(id="room-output")
             with TabPane("System", id="system-tab"):
                 yield Log(id="system-output")
+            with TabPane("Room", id="room-tab"):
+                yield Log(id="room-output")
         yield Input(placeholder="Input your command here")
         yield Footer()
 
@@ -377,7 +377,6 @@ def aan(word: str) -> str:
 @Topic.register(LookInputEvent)
 def handle_look_input_event(event: "LookInputEvent", **kwargs):
     room, things = get_room_and_things(event.session.user.room_id)
-    print(room, things, "yeah")
     markup = f"You look around the {room.name}."
     for thing in things:
         markup += f" You see {aan(thing.name)} {thing.name}."
@@ -516,6 +515,9 @@ class Command(BaseModel):
             args[pos_arg] = arg
         return args
 
+    def get_event(self, **args) -> BaseEvent:
+        return self.event_class(**args)
+
 
 class HelpCommand(Command):
     trigger: str = "help"
@@ -527,15 +529,48 @@ class HelpCommand(Command):
 class LookCommand(Command):
     trigger: str = "look"
     pos_args: list[str] = []
-    opt_args: list[str] = []
+    opt_args: list[str] = ["at", "in"]
     event_class: type[BaseEvent] = LookInputEvent
 
+    def parse(self, raw: str) -> dict[str, str]:
+        raw = raw.replace(self.trigger, "").strip()
+        parsed = dict()
+        if len(raw) == 0:
+            return parsed
 
-class LookAtCommand(Command):
-    trigger: str = "look at"
-    pos_args: list[str] = ["item_name"]
-    opt_args: list[str] = []
-    event_class: type[BaseEvent] = LookAtInputEvent
+        segments = raw.split(" ")
+        current_idx = 0
+        grouped_segments = []
+        while current_idx < len(segments):
+            current_segment = segments[current_idx]
+            if current_segment.startswith('"'):
+                look_idx = current_idx
+                end_idx = None
+                while look_idx < len(segments):
+                    look_segment = segments[look_idx]
+                    if look_segment.endswith('"'):
+                        end_idx = look_idx
+                        break
+                    else:
+                        look_idx += 1
+                if end_idx is None:
+                    raise ValueError("Unmatched quote found!")
+                grouped_segments.append(" ".join(segments[current_idx:end_idx+1]).strip('"'))
+                current_idx = end_idx
+            else:
+                grouped_segments.append(current_segment)
+            current_idx += 1
+        for idx, segment in enumerate(grouped_segments):
+            if segment in self.opt_args:
+                parsed[segment] = grouped_segments[idx + 1]
+        return parsed
+
+    def get_event(self, **args) -> BaseEvent:
+        if args.get("at"):
+            args["item_name"] = args.pop("at")
+            return LookAtInputEvent(**args)
+        else:
+            return self.event_class(**args)
 
 
 class CreateCommand(Command):
@@ -586,11 +621,11 @@ def parse_input(raw: str, session: Session) -> BaseEvent | None:
     }.get(channel_flag, "system")
 
     command = CommandRegistry().get_command(raw)
-    if command.pos_args:
+    if command.pos_args or command.opt_args:
         args = command.parse(raw)
     else:
         args = dict()
-    return command.event_class(
+    return command.get_event(
         session=session,
         channel=channel,
         raw_message=raw,
