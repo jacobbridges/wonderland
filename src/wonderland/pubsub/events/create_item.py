@@ -1,4 +1,4 @@
-from src.wonderland.events.base import BaseInputEvent, BaseOutputEvent
+from src.wonderland.pubsub.events.base import BaseInputEvent, BaseOutputEvent
 
 
 class CreateItemInputEvent(BaseInputEvent):

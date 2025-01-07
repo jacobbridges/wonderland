@@ -1,6 +1,6 @@
 from src.wonderland.commands.factory import CommandFactory
 from src.wonderland.commands.registry import CommandRegistry
-from src.wonderland import events
+from src.wonderland.pubsub import events
 
 
 class App:
