@@ -59,7 +59,6 @@ class Topic:
         with cls.__thread_lock:
             cls.__registry[event_klass].remove(handler)
 
-
     @classmethod
     def register(cls, event_klass: type["BaseEvent"]):
         """
