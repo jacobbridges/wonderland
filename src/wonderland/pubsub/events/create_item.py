@@ -16,7 +16,7 @@ class CreateItemOutputEvent(BaseOutputEvent):
 @Topic.register(CreateItemInputEvent)
 def handle_create_item_input_event(event: CreateItemInputEvent, **kwargs):
     thing = crud.create_thing_for_room(
-        session=event.session,
+        session=event.session.orm,
         data=ThingCreate(name=event.item_name),
         room_id=event.session.user.room_id
     )

@@ -11,3 +11,4 @@ class App:
 
     def build_commands(self):
         CommandFactory.create_command(trigger="create", event_class=events.CreateItemInputEvent, pos_args=["item_name"])
+        CommandFactory.create_command(trigger="look", event_class=events.LookInputEvent)
