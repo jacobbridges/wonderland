@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from src.wonderland.pubsub.events import BaseEvent
+from src.wonderland.pubsub.events.base import BaseEvent
 
 
 class BaseCommand(BaseModel):

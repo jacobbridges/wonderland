@@ -119,5 +119,5 @@ def create_room_portal(*, session: Session, data: RoomPortalCreate) -> RoomPorta
 
 def get_room(*, session: Session, room_id: int) -> Room | None:
     statement = select(Room).where(Room.id == room_id)
-    room = session.exec(statement).first()
+    room = session.exec(statement).one()
     return room

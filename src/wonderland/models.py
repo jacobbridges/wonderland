@@ -10,9 +10,11 @@ from sqlalchemy import Column, JSON, ARRAY
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
-    description: str | None
+    description: str | None = Field(default=None)
     room_id: int | None = Field(default=None, foreign_key="room.id")
     room: t.Optional["Room"] | None = Relationship(back_populates="users")
+    lands: list["Land"] = Relationship(back_populates="owner")
+    things: list["Thing"] = Relationship(back_populates="user")
 
 
 class UserCreate(SQLModel):
@@ -26,8 +28,9 @@ class Land(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
     description: str | None
-    owner_id: int = Field(foreign_key="owner.id")
-    owner: User = Relationship(back_populates="lands")
+    owner_id: int | None = Field(default=None, foreign_key="user.id")
+    owner: User | None = Relationship(back_populates="lands")
+    rooms: list["Room"] = Relationship(back_populates="land")
 
 
 class LandCreate(SQLModel):
@@ -44,10 +47,12 @@ class Thing(SQLModel, table=True):
     description: str | None
     room_id: int | None = Field(default=None, foreign_key="room.id")
     room: t.Optional["Room"] = Relationship(back_populates="things")
-    container_id: int | None = Field(default=None, foreign_key="container.id")
-    container: t.Optional["Thing"] = Relationship(back_populates="inventory")
+    container_id: int | None = Field(default=None, foreign_key="thing.id")
+    container: t.Optional["Thing"] = Relationship(back_populates="inventory", sa_relationship_kwargs={"remote_side": "Thing.id"})
+    inventory: list["Thing"] = Relationship(back_populates="container")
     user_id: int | None = Field(default=None, foreign_key="user.id")
     user: User | None = Relationship(back_populates="things")
+    unlocks: t.Optional["RoomPortal"] = Relationship(back_populates="key")
 
 
 class ThingCreate(SQLModel):
@@ -63,6 +68,9 @@ class Room(SQLModel, table=True):
     description: str | None
     land_id: int | None = Field(default=None, foreign_key="land.id")
     land: Land = Relationship(back_populates="rooms")
+    users: list[User] = Relationship(back_populates="room")
+    things: list[Thing] = Relationship(back_populates="room")
+    exits: list["RoomPortal"] = Relationship(back_populates="source", sa_relationship_kwargs={"foreign_keys": "RoomPortal.source_id"})
 
 
 class RoomCreate(SQLModel):
@@ -75,12 +83,11 @@ class RoomPortal(SQLModel, table=True):
     name: str | None
     description: str | None
     is_locked: bool = Field(default=False)
-    key_id: int | None = Field(default=None, foreign_key="key.id")
+    key_id: int | None = Field(default=None, foreign_key="thing.id")
     key: Thing | None = Relationship(back_populates="unlocks")
-    source_id: int | None = Field(default=None, foreign_key="source.id")
-    source: Room | None = Relationship(back_populates="exits")
-    target_id: int | None = Field(default=None, foreign_key="target.id")
-    target: Room | None = Relationship(back_populates="entrances")
+    source_id: int | None = Field(default=None, foreign_key="room.id")
+    source: Room | None = Relationship(back_populates="exits", sa_relationship_kwargs={"foreign_keys": "RoomPortal.source_id"})
+    target_id: int | None = Field(default=None, foreign_key="room.id")
 
 
 class RoomPortalCreate(SQLModel):

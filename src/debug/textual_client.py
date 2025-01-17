@@ -2,6 +2,12 @@
 This is a simple client for debugging wonderland locally. It uses the amazing
   textual library for the command line interface.
 """
+import sys, pathlib
+cd = pathlib.Path(__file__).parent.resolve()
+project_dir = cd.parent.parent.resolve()
+print(project_dir)
+sys.path.insert(0, str(project_dir))
+
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Input, Log
@@ -21,7 +27,7 @@ class CliApp(App):
     AUTO_FOCUS = "Input"
 
     CSS = """
-    Header = {
+    Header {
         max-height: 10vh;
     }
     Log {
@@ -58,11 +64,10 @@ class CliApp(App):
 
         # Construct a new wonderland session
         # TODO: Consider renaming to context?
-        self.session = Session(
-            orm=self.orm,
-            user=user,
-        )
+        self.session = Session(user=user)
+        self.session.set_orm(self.orm)
         self.wonderland = Wonderland()
+        self.wonderland.build_commands()
 
         # Define a simple subscriber for output events
         log_output = self.query_one("#app-output")
@@ -82,3 +87,10 @@ class CliApp(App):
             **cmd.parse(event.value),
         )
         Topic.push(wevent)
+
+
+if __name__ == "__main__":
+    app = CliApp()
+    app.run()
+
+    Topic.close()

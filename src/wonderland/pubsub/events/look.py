@@ -15,11 +15,11 @@ class LookOutputEvent(BaseOutputEvent):
 @Topic.register(LookInputEvent)
 def handle_look_input_event(event: LookInputEvent, **kwargs):
     room = crud.get_room(
-        session=event.session.orm,
+        session=event.session.get_orm(),
         room_id=event.session.user.room_id
     )
     things = crud.list_things_by_room(
-        session=event.session.orm,
+        session=event.session.get_orm(),
         room_id=event.session.user.room_id,
     )
     markup = f"You look around the {room.name}."
