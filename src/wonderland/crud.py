@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Any, Sequence
 
 from sqlmodel import Session, select
 
@@ -22,7 +22,7 @@ def create_user(*, session: Session, data: UserCreate) -> User:
     return record
 
 
-def update_user(*, session: Session, user: User, field: str, value: str) -> User:
+def update_user(*, session: Session, user: User, field: str, value: Any) -> User:
     user.sqlmodel_update({field: value})
     session.add(user)
     session.commit()
@@ -39,8 +39,8 @@ def get_user_by_name(*, session: Session, name: str) -> User | None:
 # +---------------------------------------------------------------------------+
 # |                                  L A N D                                  |
 # +---------------------------------------------------------------------------+
-def create_land(*, session: Session, data: LandCreate, user_id: int) -> Land:
-    record = Land.model_validate(data, update={"owner_id": user_id})
+def create_land(*, session: Session, data: LandCreate) -> Land:
+    record = Land.model_validate(data)
     session.add(record)
     session.commit()
     session.refresh(record)

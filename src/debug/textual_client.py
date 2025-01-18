@@ -12,13 +12,49 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Input, Log
 
-from src.wonderland.models import UserCreate
+from src.wonderland import models as m
 from src.wonderland.pubsub.events.base import BaseOutputEvent
 from src.wonderland.pubsub.topic import Topic
 from src.wonderland.app import App as Wonderland
 from src.wonderland import crud
 from src.wonderland.session import Session
-from src.wonderland.core.db import new_session
+from src.wonderland.core.db import new_session, OrmSession
+
+
+def seed_data_for_debug(orm: OrmSession) -> m.User:
+    user = crud.get_user_by_name(
+        session=orm,
+        name="Mad Hatter",
+    )
+    if not user:
+        user = crud.create_user(
+            session=orm,
+            data=m.UserCreate(name="Mad Hatter")
+        )
+    if user.room_id is not None:
+        return user
+    land = crud.create_land(
+        session=orm,
+        data=m.LandCreate(
+            name="Wonderland",
+            owner_id=user.id,
+        ),
+    )
+    room = crud.create_room(
+        session=orm,
+        data=m.RoomCreate(
+            name="Pleasant Garden",
+            description="A large table is set under the tree here, just outside the March Hare’s house.",
+        ),
+        land_id=land.id,
+    )
+    user = crud.update_user(
+        session=orm,
+        user=user,
+        field="room_id",
+        value=room.id,
+    )
+    return user
 
 
 class CliApp(App):
@@ -52,15 +88,7 @@ class CliApp(App):
         self.orm = new_session()
 
         # Assume this user for debug purposes
-        user = crud.get_user_by_name(
-            session=self.orm,
-            name="Mad Hatter",
-        )
-        if not user:
-            user = crud.create_user(
-                session=self.orm,
-                data=UserCreate(name="Mad Hatter")
-            )
+        user = seed_data_for_debug(self.orm)
 
         # Construct a new wonderland session
         # TODO: Consider renaming to context?
@@ -88,9 +116,10 @@ class CliApp(App):
         )
         Topic.push(wevent)
 
+    def on_unmount(self) -> None:
+        Topic.close()
+
 
 if __name__ == "__main__":
     app = CliApp()
     app.run()
-
-    Topic.close()

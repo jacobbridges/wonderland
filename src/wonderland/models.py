@@ -27,7 +27,7 @@ class UserCreate(SQLModel):
 class Land(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
-    description: str | None
+    description: str | None = Field(default=None)
     owner_id: int | None = Field(default=None, foreign_key="user.id")
     owner: User | None = Relationship(back_populates="lands")
     rooms: list["Room"] = Relationship(back_populates="land")
