@@ -11,7 +11,9 @@ class CommandRegistry:
             instance = klass()
             self._map_by_trigger[instance.trigger] = instance
 
-    def get_command(self, raw: str) -> BaseCommand:
+    def get_command(self, raw: str, help_on_none=True) -> BaseCommand:
         for trigger, command in self._map_by_trigger.items():
             if raw.startswith(trigger):
                 return command
+        if help_on_none:
+            return self._map_by_trigger.get("help")

@@ -21,7 +21,6 @@ def handle_create_item_input_event(event: CreateItemInputEvent, **kwargs):
         room_id=event.session.user.room_id
     )
     output_event = CreateItemOutputEvent(
-        channel=event.channel,
         markup=f"You create {aan(thing.name)} {thing.name} and drop it on the ground here.",
     )
     Topic.push(output_event)

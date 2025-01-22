@@ -1,0 +1,1 @@
+This directory contains core Events related to the application lifecycle, e.g. player logins and client disconnects.

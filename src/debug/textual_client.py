@@ -3,6 +3,7 @@ This is a simple client for debugging wonderland locally. It uses the amazing
   textual library for the command line interface.
 """
 import sys, pathlib
+
 cd = pathlib.Path(__file__).parent.resolve()
 project_dir = cd.parent.parent.resolve()
 print(project_dir)
@@ -64,16 +65,16 @@ class CliApp(App):
 
     CSS = """
     Header {
-        max-height: 10vh;
+        height: 10vh;
     }
     Log {
-        max-height: 60vh;
+        height: 65vh;
     }
     Input {
-        max-height: 20vh;
+        height: 15vh;
     }
     Footer {
-        max-height: 10vh;
+        height: 10vh;
     }
     """
 
@@ -107,10 +108,12 @@ class CliApp(App):
     def on_input(self, event: Input.Submitted) -> None:
         """When the user hits return within the Input element."""
         event.input.clear()
+        # Ignore empty commands
+        if not event.value.strip():
+            return
         cmd = self.wonderland.command_registry.get_command(event.value)
         wevent = cmd.get_event(
             session=self.session,
-            channel="system",
             raw_message=event.value,
             **cmd.parse(event.value),
         )

@@ -10,5 +10,6 @@ class App:
         self.command_registry.load_commands()
 
     def build_commands(self):
+        CommandFactory.create_command(trigger="help", event_class=events.HelpInputEvent)
         CommandFactory.create_command(trigger="create", event_class=events.CreateItemInputEvent, pos_args=["item_name"])
         CommandFactory.create_command(trigger="look", event_class=events.LookInputEvent)

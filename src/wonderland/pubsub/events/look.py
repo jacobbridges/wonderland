@@ -23,10 +23,11 @@ def handle_look_input_event(event: LookInputEvent, **kwargs):
         room_id=event.session.user.room_id,
     )
     markup = f"You look around the {room.name}."
+    if room.description:
+        markup += "\n" + room.description
     for thing in things:
         markup += f" You see {aan(thing.name)} {thing.name}."
     output_event = LookOutputEvent(
-        channel=event.channel,
         markup=markup,
     )
     Topic.push(output_event)
