@@ -10,6 +10,15 @@ from src.wonderland.models import (
     Thing, ThingCreate,
 )
 
+class NoResults(Exception):
+    """Raised when no results are returning for a query."""
+
+
+class MoreThanOne(Exception):
+    """Raised when more than on result was found for a query."""
+    def __init__(self, results: Sequence[Any]):
+        self.results = results
+
 
 # +---------------------------------------------------------------------------+
 # |                                  U S E R                                  |
@@ -96,6 +105,18 @@ def list_things_by_name(*, session: Session, name: str, room_id: int) -> Sequenc
     statement = select(Thing).where(Thing.name == name, Thing.room_id == room_id)
     things = session.exec(statement).all()
     return things
+
+
+def delete_thing_by_name(*, session: Session, name: str, room_id: int) -> Thing:
+    statement = select(Thing).where(Thing.name == name, Thing.room_id == room_id)
+    things = session.exec(statement).all()
+    if len(things) == 0:
+        raise NoResults()
+    if len(things) > 1:
+        raise MoreThanOne(things)
+    session.delete(things[0])
+    session.commit()
+    return things[0]
 
 
 # +---------------------------------------------------------------------------+

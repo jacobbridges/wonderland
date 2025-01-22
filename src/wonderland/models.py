@@ -44,7 +44,7 @@ class LandCreate(SQLModel):
 class Thing(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
-    description: str | None
+    description: str | None = Field(default=None)
     room_id: int | None = Field(default=None, foreign_key="room.id")
     room: t.Optional["Room"] = Relationship(back_populates="things")
     container_id: int | None = Field(default=None, foreign_key="thing.id")

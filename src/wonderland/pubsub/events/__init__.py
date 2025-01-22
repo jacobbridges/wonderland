@@ -1,23 +1,12 @@
-from .create_item import (
-    CreateItemInputEvent,
-    CreateItemOutputEvent,
-)
-from .help import (
-    HelpInputEvent,
-    HelpOutputEvent,
-)
-from .look import (
-    LookInputEvent,
-    LookOutputEvent,
-)
-
+from .create_item import CreateItemInputEvent
+from .delete_thing import DeleteItemInputEvent
+from .help import HelpInputEvent
+from .look import LookInputEvent
 
 
 __all__ = [
     "CreateItemInputEvent",
-    "CreateItemOutputEvent",
+    "DeleteItemInputEvent",
     "HelpInputEvent",
-    "HelpOutputEvent",
     "LookInputEvent",
-    "LookOutputEvent",
 ]

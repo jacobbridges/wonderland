@@ -96,7 +96,6 @@ class CliApp(App):
         self.session = Session(user=user)
         self.session.set_orm(self.orm)
         self.wonderland = Wonderland()
-        self.wonderland.build_commands()
 
         # Define a simple subscriber for output events
         log_output = self.query_one("#app-output")
