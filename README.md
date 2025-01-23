@@ -4,17 +4,14 @@
 
 ## Architecture Diagrams
 
-_Because sometimes it helps to picture it in your mind._
-
-### High Level Overview
+These visualizations are very simplistic, but my goal at this phase in the project is
+to visualize my planned architecture and catch any potential issues early.
 
 ![High Level Diagram](docs/media/high-level-overview.png)
 
-### Pipe Internals
-
 ![What's happening in a Pipe?](docs/media/whats-happening-in-a-pipe.png)
 
-
+![What's inside an event?](docs/media/whats-inside-an-event.png)
 
 ## List of Bugs
 
