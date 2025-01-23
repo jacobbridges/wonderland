@@ -1,6 +1,20 @@
 # Wonderland
 
-_Like mixing MUD, classic chat room, and VRChat into a potent cocktail._
+> Text-based persistent world with websockets and Carroll.
+
+## Architecture Diagrams
+
+_Because sometimes it helps to picture it in your mind._
+
+### High Level Overview
+
+![High Level Diagram](docs/media/high-level-overview.png)
+
+### Pipe Internals
+
+![What's happening in a Pipe?](docs/media/whats-happening-in-a-pipe.png)
+
+
 
 ## List of Bugs
 
